@@ -1,0 +1,72 @@
+[project]
+name = "speecheval"
+version = "2.0.0"
+description = "Zero-shot TTS evaluation against the Multilingual Speech Benchmark v2.0 protocol"
+requires-python = ">=3.12"
+
+dependencies = [
+    # The benchmark's own measurement code. Every number that is compared against
+    # a published anchor is produced by it: preprocessing, text normalisation,
+    # error-rate aggregation, the bootstraps, the recognisers and the speaker
+    # encoders. Reimplementing any of that would put our numbers on a ruler that
+    # only looks like the published one. Pinned to a revision so a report can be
+    # traced to the exact code that produced it. Private repository — `make setup`
+    # needs an SSH key with access.
+    "make-speech-benchmark @ git+ssh://git@github.com/nineninesix-ai/make-speech-benchmark@34b9ebd3855df456d1e9530f0294d472c8e2e1ff",
+    "s3prl>=0.4.18",      # WavLM backbone behind the seed-tts-eval checkpoint
+    "tabulate>=0.9",      # markdown tables
+    "sentencepiece",      # GigaAM, via its remote modeling code
+    "hydra-core",         # ditto
+    "pyannote.audio",     # ditto
+    # data
+    "datasets>=3.6",
+    "huggingface-hub>=1.0",
+    "pyarrow>=17",
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "scipy>=1.14",
+    "PyYAML>=6.0",
+    # audio
+    "soundfile>=0.13",
+    "soxr>=1.0",
+    "librosa>=0.11",
+    # librosa only asks for numba>=0.51, and numba 0.53.1 declares no numpy upper
+    # bound at all — so a resolver reads it as compatible with numpy 2.5, picks it
+    # over every modern release, and then fails to build llvmlite on Python 3.12.
+    "numba>=0.61",
+    "silero-vad>=6.0",
+    # models
+    "torch>=2.6",
+    "torchaudio>=2.6",
+    "transformers>=4.57",
+    "accelerate>=1.0",
+    "speechbrain>=1.0",
+    # metrics
+    "jiwer>=4.0",
+    "num2words>=0.5.14",
+    # Not on PyPI — upstream ships it from git only. Pinned like the engine so a
+    # naturalness number can be traced to the code that produced it.
+    "utmosv2 @ git+https://github.com/sarulab-speech/UTMOSv2.git@cc2700db57bb83ee13dc31ebe1b868c254e15d09",
+    "speechmos>=0.0.1.1",
+    "onnxruntime-gpu>=1.20",
+    # asr backends / api
+    "elevenlabs>=2.0",
+    # ux
+    "tqdm>=4.67",
+    "rich>=13.0",
+    "psutil>=6.0",
+]
+
+[project.scripts]
+speecheval = "speecheval.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["speecheval*", "nisqa*"]
+
+# torch is intentionally unpinned: the wheel must match the GPU architecture.
+# Blackwell (compute capability 10.0/12.0) needs a CUDA >= 12.8 build. Install
+# the matching wheel first, then `make setup` resolves everything else against it.

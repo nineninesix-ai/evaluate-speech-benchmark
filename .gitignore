@@ -1,0 +1,15 @@
+.env
+.venv/
+venv/
+venv_eval/
+__pycache__/
+*.egg-info/
+
+# data (large, fetched from Hugging Face)
+benchmark/
+bm_generated/
+
+# run artefacts
+.cache/
+results/
+*.log

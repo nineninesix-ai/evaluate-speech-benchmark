@@ -1,0 +1,241 @@
+# =============================================================================
+#  speecheval — evaluation configuration
+#
+#  Protocol: Multilingual Speech Benchmark v2.0 (benchmark/README.md).
+#  Every parameter that determines a published number lives in this file.
+#  Nothing is hardcoded in the package; changing a number means changing a line
+#  here, and the value used is written into every report.
+# =============================================================================
+
+run:
+  name: gepard-1.0                  # system under test — appears in every table
+  output_dir: results/gepard-1.0    # reports land here, mirroring benchmark/reports
+  cache_dir: .cache/speecheval      # per-stage cache; makes every stage resumable
+  device: auto                      # auto | cuda | cpu
+  seed: 20260725                    # same seed the benchmark used for its bootstraps
+  resume: true                      # reuse cached stage output instead of recomputing
+
+
+# --- reference side -----------------------------------------------------------
+# The benchmark itself: target texts, prompt audio, and the human anchors.
+benchmark:
+  path: ./benchmark                 # local snapshot (or a HF repo id)
+  split: main
+  languages: [en-US, es-ES, es-MX, nl-NL, pt-BR, ky]
+  reports_dir: ./benchmark/reports  # source of anchor / impostor-floor coefficients
+
+
+# --- system side --------------------------------------------------------------
+# Synthesised audio. One directory per (language x reference voice), named
+# "<language>__<voice>"; the voice half must resolve in `voices` below.
+synthesis:
+  path: ./bm_generated
+  split: train
+  include: null                     # null = every directory found; or a list of names
+  exclude: []
+  columns:
+    key: utt                        # join key against the benchmark
+    audio: audio
+    text: text
+    duration: gen_dur
+    latency: latency_s
+    model: model_id
+    voice: ref_voice
+
+
+# --- what each reference voice is ---------------------------------------------
+# per_row    — the voice is cloned from this row's own benchmark prompt. The
+#              benchmark's published anchor and impostor floor apply directly.
+# fixed_file — one voice for the whole subset, from a local file. The benchmark's
+#              coefficients do NOT apply; speecheval calibrates its own floor and
+#              anchor for it (see sim.calibration.fixed_file_voices).
+voices:
+  cv_voice:
+    type: per_row
+    column: prompt_audio            # the exact audio the system was conditioned on
+    note: benchmark prompt speaker, a different one on every row
+
+  audio_en:
+    type: fixed_file
+    path: ref_audio_data/audio_en.wav
+    native_language: en
+
+  audio_ru:
+    type: fixed_file
+    path: ref_audio_data/audio_ru.wav
+    native_language: ru
+
+  nurisa_en:
+    type: fixed_file
+    path: ref_audio_data/nurisa_en.wav
+    native_language: en
+
+  ulan_emo:
+    type: fixed_file
+    path: ref_audio_data/ulan_emo.wav
+    native_language: en
+
+
+# --- preprocessing parity -----------------------------------------------------
+# The anchors were measured on audio in this exact state. Synthesis that skips
+# any of these steps is not being compared like for like: trailing silence and
+# level both move SIM, and linear-interpolation resampling folds aliasing into
+# the speech band.
+audio:
+  target_sample_rate: 16000
+  resampler: soxr_hq                # never linear interpolation
+  mono: true
+  vad:
+    enabled: true                   # Silero VAD
+    pad_ms: 50
+    threshold: 0.5
+  peak_dbfs: -1.0
+
+
+# --- text normalisation -------------------------------------------------------
+# Applied identically to reference and hypothesis.
+#   NFC -> lowercase -> expand digits -> strip punctuation -> collapse whitespace
+text_normalization:
+  unicode_form: NFC
+  lowercase: true
+  expand_digits: true               # num2words, per language
+  expand_digits_skip_languages: [ky]
+  keep_apostrophes: true            # word-internal: don't, 's-Gravenhage
+  keep_diacritics: true             # año != ano, sé != se
+  fold_typographic_apostrophes: false # U+2019/U+02BC -> U+0027 before stripping.
+                                     # OFF keeps exact parity with the benchmark,
+                                     # which turns ’ into a space (couldn’t ->
+                                     # "couldn t", two words) while keeping ASCII '.
+                                     # Turning it ON changes N_ref and breaks the
+                                     # shared denominator with the published anchor.
+                                     # Rows where a recogniser emitted ’ are counted
+                                     # either way and reported as a sensitivity note.
+  punctuation: '!"#$%&()*+,-./:;<=>?@[\]^_`{|}~«»„“”‘’…–—¿¡'
+
+
+# --- recognisers --------------------------------------------------------------
+# Engine names are msbench registry names, and msbench owns the model identity,
+# the decoding defaults and which languages each engine covers. Anything set
+# here is a deliberate override of that default, so the two can never drift.
+asr:
+  # Which engine is the headline for each language. The rest are second opinions.
+  primary:
+    en-US: whisper
+    es-ES: whisper
+    es-MX: whisper
+    nl-NL: whisper
+    pt-BR: whisper
+    ky: gigaam
+
+  engines:
+    whisper:                        # openai/whisper-large-v3, greedy, 200 tokens
+      enabled: true
+      batch: 16
+      repetition_penalty: null      # removed in v2: it suppresses exactly the
+                                    # token pattern autoregressive TTS failure makes
+      chunk_length_s: null          # short-form path; clips are 2-6 s
+
+    mms:                            # CTC, greedy, no LM: emits what it heard
+      enabled: true
+      batch: 16
+
+    gigaam:                         # the only recogniser validated for Kyrgyz here
+      enabled: true
+      batch: 1                      # transcribes one clip at a time
+
+    elevenlabs:                     # Scribe v2 — a second strong-LM read, hosted
+      enabled: true
+      api_key_env: ELEVENLABS_KEY   # from .env; exported as the name msbench reads
+      workers: 12                   # measured: ~8.8 clips/s; 24 draws 429s
+      timeout: 300
+      retries: 5
+      seed: 0
+      temperature: 0
+
+
+# --- speaker similarity -------------------------------------------------------
+# Encoders, checkpoints and the cosine convention all come from msbench. Clips
+# are embedded whole: truncating would change the value and break parity.
+sim:
+  encoders: [wavlm_ft, ecapa, wavlm_sv]
+  batch: 1                          # Not a performance knob — the only correct value.
+                                    # Padding a batch changes the embedding: the same
+                                    # 2 s clip scored alone and inside a batch gives
+                                    # cos 0.295 (wavlm_ft), 0.339 (wavlm_sv), 0.997
+                                    # (ecapa). Measured in this repo; the reference
+                                    # driver embeds one clip at a time for this reason.
+
+  calibration:
+    # A bare cosine is unreadable without a floor. sim_norm = (x - floor) / (anchor - floor):
+    # 0 = indistinguishable from an impostor, 1 = as close as two recordings of one person.
+    per_row_voices:
+      source: benchmark_reports
+      csv: csv/sim.csv              # published anchor + impostor floor per language
+
+    fixed_file_voices:
+      # Our own voices are not benchmark speakers, so both ends of the scale are
+      # computed here rather than read from the card.
+      floor:
+        against: prompt_audio       # cross-speaker pairs vs the language's prompts
+        pairs: 5000
+      anchor:
+        method: intra_session       # cosine between chunks of the reference file
+        chunk_sec: 4.0
+        hop_sec: 2.0
+        max_chunks: 8
+        # Optimistic by construction: one recording, one channel, one session.
+        # Flagged as such in every table it appears in.
+
+
+# --- naturalness --------------------------------------------------------------
+# Outside the benchmark protocol, which measures no naturalness axis at all.
+# Reported in its own section, never mixed into the WER/SIM tables.
+quality:
+  enabled: true
+  dnsmos:                           # same metric as the benchmark's qc_dnsmos_*,
+    enabled: true                   # so synthesis is comparable with prompt and GT
+    batch_size: 32
+  utmos:
+    enabled: true
+    batch_size: 32
+  nisqa:
+    enabled: true
+    target_sample_rate: 48000       # NISQA requires 48 kHz
+    batch_size: 32
+
+
+# --- failure detection --------------------------------------------------------
+# What a WER mean hides. Not in the benchmark card; added because the generated
+# audio already contains 46-second renderings of six-word sentences.
+failure:
+  catastrophic_wer: 0.5             # share above this is reported beside every WER
+  runaway_duration_ratio: 2.0       # gen_dur / gt_dur above this counts as a runaway
+  min_duration_ratio: 0.5           # and below this as truncation
+
+
+# --- statistics ---------------------------------------------------------------
+stats:
+  aggregation: corpus               # headline: sum(S+D+I) / sum(N_ref)
+  also_report_macro: true           # mean of per-utterance rates, for continuity
+  bootstrap:
+    replicates: 2000
+    confidence: 0.95
+    cluster_by: speaker_id          # rows are not independent; resampling them
+                                    # would understate every interval
+  paired:
+    enabled: true                   # same sentences on both sides — never compare
+                                    # two independent intervals
+    against: [human_anchor]         # plus every other voice of the same language
+
+
+# --- output -------------------------------------------------------------------
+report:
+  markdown: true
+  csv: true
+  per_utterance_parquet: true       # re-aggregate or re-slice anything without a GPU
+  json_summary: true
+  push:
+    enabled: false
+    repo: null
+    private: true
+    include_audio: false
