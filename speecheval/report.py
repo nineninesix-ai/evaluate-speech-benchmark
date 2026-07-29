@@ -56,6 +56,10 @@ ANCHOR_COLUMNS = {
 }
 
 
+# Below this the synthesis is not a short reading, it is nothing at all.
+EMPTY_OUTPUT_SEC = 0.3
+
+
 def _ci(lo: float, hi: float, digits: int = 4) -> str:
     if not (np.isfinite(lo) and np.isfinite(hi)):
         return "—"
@@ -219,6 +223,7 @@ class Report:
                 "floor p95": round(summary["floor_p95"], 4),
                 "usable range": round(summary["usable_range"], 4),
                 "below floor p95": f"{100 * summary['below_floor_p95']:.1f}%",
+                "not embeddable": summary.get("n_too_short_to_embed", 0),
                 "calibration": summary["calibration_source"],
             })
         return pd.DataFrame(rows).sort_values(["lang", "voice", "encoder"])
@@ -240,11 +245,18 @@ class Report:
             if {"synth_dur", "gt_dur"}.issubset(group.columns):
                 valid = group.gt_dur.gt(0)
                 ratio = (group.synth_dur[valid] / group.gt_dur[valid]).dropna()
+            # Output too short to be a sentence at all — 46 ms of silence where a
+            # reading should be. A WER of 1.0 records it as "got every word
+            # wrong", which is true but hides that nothing was produced.
+            empty = float((group.synth_dur < EMPTY_OUTPUT_SEC).mean()) \
+                if "synth_dur" in group.columns else float("nan")
+
             rows.append({
                 "subset": subset,
                 "lang": summary["lang"],
                 "voice": summary["voice"],
                 "asr": asr,
+                "empty output": f"{100 * empty:.1f}%" if np.isfinite(empty) else "—",
                 "catastrophic (WER>0.5)": f"{100 * summary['catastrophic_rate']:.1f}%",
                 "runaway (dur>%.1fx)" % runaway:
                     f"{100 * float((ratio > runaway).mean()):.1f}%" if len(ratio) else "—",

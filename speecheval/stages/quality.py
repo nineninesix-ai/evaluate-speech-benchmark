@@ -36,6 +36,12 @@ CHUNK = 128            # clips held decoded at once
 NISQA_SR = 48000
 CANONICAL_SR = 16000
 
+# Below this there is no speech to judge — the system emitted silence, which the
+# failure table already records. Feeding it to the predictors would either crash
+# them or return a confident score for nothing, and one bad clip would take the
+# whole chunk's batch with it.
+MIN_QUALITY_SEC = 0.3
+
 
 class QualityStage:
     def __init__(self, config, benchmark, synthesis, cache):
@@ -132,6 +138,7 @@ class QualityStage:
                     "canonical_sr": CANONICAL_SR,
                     "nisqa_sr": NISQA_SR,
                     "vad": self.config.audio.vad.enabled,
+                    "min_sec": MIN_QUALITY_SEC,
                 },
                 "row_limit": self.row_limit,
             },
@@ -168,6 +175,7 @@ class QualityStage:
         native_buffer: list[np.ndarray] = []
         keys: list[str] = []
         seen = 0
+        n_too_short = 0
 
         progress = tqdm(total=subset.n_rows, desc=f"{subset.name} · naturalness",
                         unit="clip", leave=False)
@@ -193,10 +201,14 @@ class QualityStage:
             if samples.size == 0:
                 continue
 
+            canonical = prepare(samples, sample_rate,
+                                trim=self.config.audio.vad.enabled, peak=True)
+            if len(canonical) < MIN_QUALITY_SEC * CANONICAL_SR:
+                n_too_short += 1
+                continue
+
             keys.append(row[columns.key])
-            canonical_buffer.append(
-                prepare(samples, sample_rate,
-                        trim=self.config.audio.vad.enabled, peak=True))
+            canonical_buffer.append(canonical)
             native_buffer.append(
                 soxr.resample(samples, sample_rate, NISQA_SR, quality="HQ")
                 .astype(np.float32)
@@ -227,6 +239,7 @@ class QualityStage:
             "voice": subset.voice.name,
             "model": self.config.run.name,
             "n_rows": len(frame),
+            "n_too_short_to_judge": n_too_short,
             "seconds": round(time.time() - started, 1),
         }
         for column in frame.columns:

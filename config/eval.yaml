@@ -144,7 +144,7 @@ asr:
       batch: 1                      # transcribes one clip at a time
 
     elevenlabs:                     # Scribe v2 — a second strong-LM read, hosted
-      enabled: true
+      enabled: false
       api_key_env: ELEVENLABS_KEY   # from .env; exported as the name msbench reads
       workers: 12                   # measured: ~8.8 clips/s; 24 draws 429s
       timeout: 300

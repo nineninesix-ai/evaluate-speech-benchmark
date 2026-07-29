@@ -32,7 +32,21 @@ from ..sources import SynthesisSubset, read_audio_file
 logger = logging.getLogger(__name__)
 
 STAGE = "sim"
-MIN_SAMPLES = 400          # msbench's own lower bound for an embeddable clip
+
+# Bump when the calibration logic changes; it is part of the cache key for the
+# voices that logic applies to.
+CALIBRATION_LOGIC = 2
+
+# A speaker encoder cannot embed an arbitrarily short clip. WavLM-SV downsamples
+# by 320 and then runs a TDNN stack whose dilated kernels need ~15 frames, so
+# anything under about 0.3 s reaches conv1d with fewer frames than the kernel and
+# raises. 0.4 s leaves margin for all three encoders.
+#
+# This is not a hypothetical: the system under test emitted 89 clips shorter than
+# 0.3 s, 74 of them in one subset and most of them exactly 46 ms — silence where a
+# sentence should be. Those are failures of the system, so they are counted and
+# reported, not allowed to kill a four-hour run.
+MIN_EMBED_SAMPLES = 6400   # 0.4 s at 16 kHz
 
 CARRY = ["speaker_id", "speaker_gender", "len_bin", "prompt_dur", "prompt_dur_bin",
          "sim_ref_dur", "sim_ref_dur_bin", "has_sim_ref", "has_gt",
@@ -69,11 +83,19 @@ class SimStage:
                     "vad": self.config.audio.vad.enabled,
                     "peak_dbfs": self.config.audio.peak_dbfs,
                 },
+                # Which clips are short enough to skip decides which rows are
+                # scored, so it belongs in the key for every unit.
+                "min_embed_samples": MIN_EMBED_SAMPLES,
                 "calibration": {
                     "floor_pairs": self.config.sim.calibration.floor.pairs,
                     "anchor_chunk_sec": self.config.sim.calibration.anchor.chunk_sec,
                     "anchor_hop_sec": self.config.sim.calibration.anchor.hop_sec,
                     "anchor_max_chunks": self.config.sim.calibration.anchor.max_chunks,
+                    # Only the voices that are actually calibrated here care how
+                    # the calibration is computed; per-row voices read published
+                    # coefficients and are unaffected by changes to it.
+                    **({} if subset.voice.is_per_row
+                       else {"logic": CALIBRATION_LOGIC}),
                 },
                 "engine_build": describe(),
                 "row_limit": self.row_limit,
@@ -101,7 +123,7 @@ class SimStage:
             # different VAD build than the one that produced the pack would move
             # the anchor. Preprocess synthesis, leave the pack alone.
             wave = read_cell(cell, stored=True)
-            if wave is None or len(wave) < MIN_SAMPLES:
+            if wave is None or len(wave) < MIN_EMBED_SAMPLES:
                 continue
             first[speaker] = encoder.embed([wave])[0]
         logger.info("%s: %d prompt speaker embeddings (%s)", language, len(first),
@@ -175,6 +197,8 @@ class SimStage:
 
         rows: list[dict] = []
         n_missing = 0
+        n_too_short = 0
+        n_failed = 0
         seen = 0
         progress = tqdm(total=subset.n_rows, desc=f"{subset.name} · {encoder.name}",
                         unit="clip", leave=False)
@@ -197,13 +221,30 @@ class SimStage:
 
             wave = read_cell(row[columns.audio], stored=False,
                              trim=self.config.audio.vad.enabled, peak=True)
-            if wave is None or len(wave) < MIN_SAMPLES:
+            if wave is None:
                 n_missing += 1
                 continue
+            if len(wave) < MIN_EMBED_SAMPLES:
+                # Too short for the encoder to embed at all — a system failure,
+                # recorded as one rather than crashing the stage.
+                n_too_short += 1
+                continue
 
-            embedding = encoder.embed([wave])[0]
+            try:
+                embedding = encoder.embed([wave])[0]
+            except Exception as exc:  # noqa: BLE001 — one clip must not cost a subset
+                n_failed += 1
+                logger.warning("%s: %s could not embed %s (%.3f s): %s",
+                               subset.name, encoder.name, utt,
+                               len(wave) / self.config.audio.target_sample_rate,
+                               str(exc)[:160])
+                continue
             rows.append({"utt": utt, "sim": float(reference @ embedding)})
         progress.close()
+
+        if n_too_short or n_failed:
+            logger.warning("%s · %s: %d clip(s) too short to embed, %d failed",
+                           subset.name, encoder.name, n_too_short, n_failed)
 
         frame = pd.DataFrame(rows)
         if frame.empty:
@@ -222,6 +263,8 @@ class SimStage:
 
         summary = self._summarise(frame, calibration, subset, encoder,
                                   n_missing, started)
+        summary["n_too_short_to_embed"] = n_too_short
+        summary["n_embed_failures"] = n_failed
         self._remember(summary)
         self._log(summary, subset, encoder, calibration)
         return frame, summary

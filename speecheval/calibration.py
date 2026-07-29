@@ -144,40 +144,66 @@ class VoiceCalibrator:
         return (float(similarities.mean()), float(np.quantile(similarities, 0.95)),
                 len(similarities))
 
-    def anchor(self, encoder, waveform: np.ndarray, sample_rate: int = 16000) -> float:
+    # A chunk shorter than this is too little speech for a speaker embedding to
+    # mean anything, and short of the encoders' own minimum input.
+    MIN_CHUNK_SEC = 2.0
+
+    def anchor(self, encoder, waveform: np.ndarray,
+               sample_rate: int = 16000) -> tuple[float, float, int]:
         """
         Mean cosine between chunks of the reference recording.
 
-        Optimistic by construction — see the module docstring. Returns NaN when
-        the recording is too short to yield two chunks, in which case the voice
-        simply has no anchor and only the floor is reported.
+        Optimistic by construction — see the module docstring. The chunk length
+        shrinks to fit a short recording rather than giving up on it: a 7 s
+        reference is cut into two 3.5 s halves instead of yielding no anchor at
+        all, and overlapping chunks are avoided wherever the length allows,
+        because overlap inflates a self-similarity that is already optimistic.
+
+        Returns (anchor, chunk_sec_used, n_chunks); the anchor is NaN when the
+        recording cannot yield two usable chunks, and the voice is then reported
+        with a floor and no anchor.
         """
-        chunk = int(self._chunk.chunk_sec * sample_rate)
-        hop = int(self._chunk.hop_sec * sample_rate)
-        if len(waveform) < 2 * chunk:
+        duration = len(waveform) / sample_rate
+        chunk_sec = min(self._chunk.chunk_sec, duration / 2)
+        if chunk_sec < self.MIN_CHUNK_SEC:
             logger.warning(
-                "reference is %.1f s, too short for two %.1f s chunks — no anchor",
-                len(waveform) / sample_rate, self._chunk.chunk_sec,
+                "reference is %.1f s — cannot cut two chunks of at least %.1f s, "
+                "so this voice gets a floor but no anchor",
+                duration, self.MIN_CHUNK_SEC,
             )
-            return float("nan")
+            return float("nan"), float("nan"), 0
+
+        chunk = int(chunk_sec * sample_rate)
+        hop = max(int(self._chunk.hop_sec * sample_rate), 1)
+        if hop < chunk and duration >= 2 * chunk_sec:
+            hop = chunk        # no overlap when the recording is long enough
 
         pieces = []
         start = 0
         while start + chunk <= len(waveform) and len(pieces) < self._chunk.max_chunks:
             pieces.append(waveform[start:start + chunk])
             start += hop
+        if len(pieces) < 2:
+            return float("nan"), chunk_sec, len(pieces)
 
         embeddings = np.stack([encoder.embed([p])[0] for p in pieces])
         gram = embeddings @ embeddings.T
         upper = gram[np.triu_indices(len(pieces), k=1)]
-        return float(upper.mean())
+        return float(upper.mean()), chunk_sec, len(pieces)
 
     def calibrate(self, encoder, language: str, voice_name: str,
                   reference_waveform: np.ndarray, reference_embedding: np.ndarray,
                   prompt_embeddings: dict[str, np.ndarray]) -> Calibration:
         floor_mean, floor_p95, n_pairs = self.floor(
             encoder, reference_embedding, prompt_embeddings)
-        anchor = self.anchor(encoder, reference_waveform)
+        anchor, chunk_sec, n_chunks = self.anchor(encoder, reference_waveform)
+        note = ("floor: this voice against every prompt speaker of the language; "
+                "anchor: between chunks of one recording, so it shares a channel "
+                "and a session and is optimistic")
+        if np.isfinite(anchor):
+            note += f" ({n_chunks} chunks of {chunk_sec:.1f} s)"
+        else:
+            note += " — reference too short to anchor, floor only"
         return Calibration(
             language=language,
             encoder=encoder.name,
@@ -186,9 +212,7 @@ class VoiceCalibrator:
             floor_mean=floor_mean,
             floor_p95=floor_p95,
             source="measured",
-            anchor_kind="intra_session",
+            anchor_kind="intra_session" if np.isfinite(anchor) else "none",
             n_floor_pairs=n_pairs,
-            note=("floor: this voice against every prompt speaker of the language; "
-                  "anchor: between chunks of one recording, so it shares a channel "
-                  "and a session and is optimistic"),
+            note=note,
         )
