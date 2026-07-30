@@ -94,10 +94,32 @@ def build_encoder(name: str, config: EvalConfig):
 
 
 def describe() -> dict[str, str]:
-    """Provenance of the measurement code, recorded in every report."""
+    """
+    Provenance of the measurement code, recorded in every report.
+
+    The commit is the part that matters: the package version is `2.0.0` across
+    revisions, so only the pinned hash ties a published number to the exact code
+    that produced it. It comes from the installer's own record of what it
+    resolved, not from anything we assert.
+    """
+    import json
+    from importlib.metadata import PackageNotFoundError, distribution
+
     import msbench
 
-    return {
-        "msbench_version": getattr(msbench, "__version__", "unknown"),
+    provenance = {
+        "msbench_version": "unknown",
+        "msbench_commit": "unknown",
         "msbench_path": getattr(msbench, "__file__", "unknown"),
     }
+    try:
+        dist = distribution("make-speech-benchmark")
+        provenance["msbench_version"] = dist.version
+        for entry in dist.files or []:
+            if entry.name == "direct_url.json":
+                info = json.loads(entry.read_text()).get("vcs_info") or {}
+                provenance["msbench_commit"] = info.get("commit_id", "unknown")
+                break
+    except (PackageNotFoundError, OSError, ValueError) as exc:
+        logger.debug("could not read msbench provenance: %s", exc)
+    return provenance

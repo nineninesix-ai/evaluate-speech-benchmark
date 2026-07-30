@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from . import __version__, console
@@ -161,6 +162,37 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_publish(args) -> int:
+    """Assemble the run's metrics into a dated folder and upload it."""
+    from .cache import StageCache
+    from .publish import Publisher
+
+    console.banner("Publish")
+    config = _load(args)
+    if not config.report.push.enabled and not args.force:
+        console.fail("report.push.enabled is false — set it, or pass --force")
+        return 2
+
+    cache = StageCache(config.cache_dir, config.run.name, enabled=True)
+    publisher = Publisher(config, cache, date=args.date)
+    manifest = publisher.build()
+
+    console.ok(f"staged {len(manifest.files)} file(s), "
+               f"{manifest.total_bytes / 1e6:.1f} MB -> {manifest.folder}/")
+    for path, size, description in manifest.files:
+        console.note(f"{path:<44}{size / 1e3:>9.1f} kB  {description}")
+
+    if args.dry_run:
+        console.warn(f"dry run — nothing uploaded; staged at {publisher.staging}")
+        return 0
+
+    console.step(f"uploading to {config.report.push.repo} "
+                 f"({'private' if config.report.push.private else 'public'})")
+    url = publisher.push_to_hub(manifest)
+    console.ok(url)
+    return 0
+
+
 def cmd_normalize(args) -> int:
     """Show what the normaliser does to a language's texts — protocol parity check."""
     from .sources import BenchmarkSource
@@ -230,6 +262,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("report", parents=[common],
                        help="rebuild the reports from cached metrics, without a GPU")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("publish", parents=[common],
+                       help="upload the run's metrics to the Hub as a dated folder")
+    p.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"),
+                   help="folder date stamp (default: today)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="assemble and list the files without uploading")
+    p.add_argument("--force", action="store_true",
+                   help="publish even when report.push.enabled is false")
+    p.set_defaults(func=cmd_publish)
 
     p = sub.add_parser("normalize", parents=[common],
                        help="compare our text normalisation against the benchmark's text_norm")

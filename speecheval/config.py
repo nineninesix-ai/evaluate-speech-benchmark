@@ -432,7 +432,15 @@ class PushConfig:
     enabled: bool
     repo: Optional[str]
     private: bool
-    include_audio: bool
+    folder: str
+    include: dict[str, bool]
+    update_root_card: bool
+
+    def wants(self, part: str) -> bool:
+        return bool(self.include.get(part, False))
+
+    def folder_for(self, date: str) -> str:
+        return self.folder.format(date=date)
 
 
 @dataclass(frozen=True)
@@ -455,11 +463,18 @@ class ReportConfig:
                 enabled=bool(push.get("enabled", False)),
                 repo=push.get("repo"),
                 private=bool(push.get("private", True)),
-                include_audio=bool(push.get("include_audio", False)),
+                folder=str(push.get("folder", "run_metrics_{date}")),
+                include={str(k): bool(v) for k, v in (push.get("include") or {}).items()},
+                update_root_card=bool(push.get("update_root_card", False)),
             ),
         )
         if cfg.push.enabled and not cfg.push.repo:
             raise ConfigError("report.push: enabled but no 'repo' given")
+        if cfg.push.enabled and "{date}" not in cfg.push.folder:
+            raise ConfigError(
+                "report.push.folder: must contain '{date}', otherwise a second run "
+                "overwrites the first instead of accumulating"
+            )
         if not any([cfg.markdown, cfg.csv, cfg.per_utterance_parquet, cfg.json_summary,
                     cfg.push.enabled]):
             raise ConfigError("report: every output is disabled — the run would produce nothing")

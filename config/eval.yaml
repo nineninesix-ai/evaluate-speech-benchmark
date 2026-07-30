@@ -234,8 +234,24 @@ report:
   csv: true
   per_utterance_parquet: true       # re-aggregate or re-slice anything without a GPU
   json_summary: true
+  # Publishing to the Hub. Everything lands under one dated folder, so a run is
+  # self-contained and repeated runs accumulate instead of overwriting.
   push:
-    enabled: false
-    repo: null
+    enabled: true
+    repo: nineninesix/gepard-voice-benchmark-generated
     private: true
-    include_audio: false
+    folder: run_metrics_{date}        # {date} -> the run date, YYYY-MM-DD
+    include:
+      per_utterance: true             # the pools: every metric, per utterance
+      summaries: true                 # the aggregate tables, with intervals
+      calibration: true               # the SIM scales — sim_norm is unreadable without them
+      provenance: true                # engine revision, decoding parameters, seeds
+      report_markdown: true
+      raw_summaries: true             # the per-unit JSON exactly as measured
+      log: false                      # the run log; verbose, occasionally carries API errors
+    # The repository already holds 20 audio configs whose resolution depends on
+    # the root card. Declaring `configs:` there would take over data-file
+    # resolution for the whole dataset and could orphan them, so the card is left
+    # alone by default and these tables are loaded by explicit path (see the
+    # folder's own README).
+    update_root_card: false

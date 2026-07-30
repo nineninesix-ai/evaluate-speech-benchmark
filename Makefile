@@ -1,4 +1,4 @@
-.PHONY: help setup login validate discover normalize evaluate report clean clean-cache
+.PHONY: help setup login validate discover normalize evaluate report publish publish-dry clean clean-cache
 
 # Colors for terminal output
 BLUE   := \033[1;34m
@@ -31,6 +31,8 @@ help: ## Show this help message
 	@echo "$(GREEN)make normalize$(RESET)  - Verify text normalisation against the benchmark"
 	@echo "$(GREEN)make evaluate$(RESET)   - Run the full evaluation pipeline"
 	@echo "$(GREEN)make report$(RESET)     - Rebuild reports from cached metrics (no GPU)"
+	@echo "$(GREEN)make publish$(RESET)    - Upload this run's metrics to the Hub"
+	@echo "$(GREEN)make publish-dry$(RESET)- Assemble the upload and list it, no Hub access"
 	@echo "$(GREEN)make clean$(RESET)      - Remove the environment"
 	@echo "$(GREEN)make clean-cache$(RESET)- Drop the stage cache, keeping reports"
 	@echo ""
@@ -123,6 +125,17 @@ evaluate: ## Run the full evaluation pipeline
 
 report: ## Rebuild reports from cached metrics, without a GPU
 	@$(PYTHON) -m speecheval.cli report --config $(CONFIG)
+
+publish: ## Upload this run's metrics to the Hub (DATE=YYYY-MM-DD to restamp)
+	@echo "$(BLUE)╔════════════════════════════════════════════════════════════╗$(RESET)"
+	@echo "$(BLUE)║              Publishing metrics to the Hub                 ║$(RESET)"
+	@echo "$(BLUE)╚════════════════════════════════════════════════════════════╝$(RESET)"
+	@echo ""
+	@$(PYTHON) -m speecheval.cli publish --config $(CONFIG) $(if $(DATE),--date $(DATE),)
+
+publish-dry: ## Assemble the upload and list it, without touching the Hub
+	@$(PYTHON) -m speecheval.cli publish --config $(CONFIG) --dry-run \
+		$(if $(DATE),--date $(DATE),)
 
 clean: ## Remove the virtual environment
 	@echo "$(YELLOW)→ Removing $(VENV)...$(RESET)"
