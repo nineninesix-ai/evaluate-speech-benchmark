@@ -8,8 +8,8 @@
 # =============================================================================
 
 run:
-  name: gepard-1.0                  # system under test — appears in every table
-  output_dir: results/gepard-1.0    # reports land here, mirroring benchmark/reports
+  name: gepard-1.2-grpo             # system under test — appears in every table
+  output_dir: results/gepard-1.2-grpo    # reports land here, mirroring benchmark/reports
   cache_dir: .cache/speecheval      # per-stage cache; makes every stage resumable
   device: auto                      # auto | cuda | cpu
   seed: 20260725                    # same seed the benchmark used for its bootstraps
@@ -19,28 +19,30 @@ run:
 # --- reference side -----------------------------------------------------------
 # The benchmark itself: target texts, prompt audio, and the human anchors.
 benchmark:
-  path: ./benchmark                 # local snapshot (or a HF repo id)
+  path: ../gepard-inference/bm_dataset   # local snapshot (or a HF repo id)
   split: main
-  languages: [en-US, es-ES, es-MX, nl-NL, pt-BR, ky]
-  reports_dir: ./benchmark/reports  # source of anchor / impostor-floor coefficients
+  languages: [en-US, es-MX, nl-NL, pt-BR] # only these four were generated this run
+  reports_dir: ../gepard-inference/bm_dataset/reports  # anchor / impostor-floor coefficients
 
 
 # --- system side --------------------------------------------------------------
-# Synthesised audio. One directory per (language x reference voice), named
-# "<language>__<voice>"; the voice half must resolve in `voices` below.
+# Synthesised audio. The generator writes a nested tree: one directory per
+# language, holding one "<voice>.parquet" per reference voice. Each voice must
+# resolve in `voices` below. (The original flat "<language>__<voice>/" layout is
+# still accepted; either produces subsets named "<language>__<voice>".)
 synthesis:
-  path: ./bm_generated
+  path: grpo-bm-dataset/data
   split: train
-  include: null                     # null = every directory found; or a list of names
+  include: null                     # null = every subset found; or a list of "<lang>__<voice>"
   exclude: []
   columns:
     key: utt                        # join key against the benchmark
     audio: audio
     text: text
-    duration: gen_dur
-    latency: latency_s
-    model: model_id
-    voice: ref_voice
+    duration: audio_seconds         # duration of the generated clip (was gen_dur)
+    latency: gen_seconds            # wall-clock generation time (was latency_s)
+    model: checkpoint               # system identity (was model_id)
+    voice: voice                    # reference-voice name (was ref_voice)
 
 
 # --- what each reference voice is ---------------------------------------------
@@ -49,31 +51,145 @@ synthesis:
 # fixed_file — one voice for the whole subset, from a local file. The benchmark's
 #              coefficients do NOT apply; speecheval calibrates its own floor and
 #              anchor for it (see sim.calibration.fixed_file_voices).
+# Every voice this run used is a platform preset — a single reference clip reused
+# across the whole subset — so all are `fixed_file`: speecheval computes their own
+# impostor floor and (optimistic, intra-session) anchor. The platform reference
+# clips live in the generator repo; the three legacy voices are local. No
+# per_row / cv_voice subset was generated this run.
 voices:
-  cv_voice:
-    type: per_row
-    column: prompt_audio            # the exact audio the system was conditioned on
-    note: benchmark prompt speaker, a different one on every row
-
+  # --- en-US platform voices (21) ---
+  aaron_boston_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/aaron_boston_m.wav
+  andre_ny_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/andre_ny_m.wav
+  anna_bay-area_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/anna_bay-area_f.wav
   audio_en:
     type: fixed_file
     path: ref_audio_data/audio_en.wav
     native_language: en
-
-  audio_ru:
+  becky_london_f:
     type: fixed_file
-    path: ref_audio_data/audio_ru.wav
-    native_language: ru
-
+    path: ../gepard-inference/ref_audio/platform_voices/wav/becky_london_f.wav
+  cara_ny_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/cara_ny_f.wav
+  declan_london_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/declan_london_m.wav
+  emily_posh_london_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/emily_posh_london_f.wav
+  james_ny_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/james_ny_m.wav
+  jamie_bay_area_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/jamie_bay_area_f.wav
+  jason_bay_area_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/jason_bay_area_m.wav
+  jermaine_bay_area_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/jermaine_bay_area_m.wav
+  jessica_ny_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/jessica_ny_f.wav
+  john_london_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/john_london_m.wav
+  katie_boston_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/katie_boston_f.wav
+  kim_ny_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/kim_ny_f.wav
+  matt_boston_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/matt_boston_m.wav
+  nick_boston_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/nick_boston_m.wav
   nurisa_en:
     type: fixed_file
     path: ref_audio_data/nurisa_en.wav
     native_language: en
-
+  priya_london_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/priya_london_f.wav
+  roc_boston_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/roc_boston_m.wav
+  sandie_boston_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/sandie_boston_f.wav
+  tara_bay_area_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/tara_bay_area_f.wav
   ulan_emo:
     type: fixed_file
     path: ref_audio_data/ulan_emo.wav
     native_language: en
+  # --- es-MX platform voices (5) ---
+  andrea_mexico_city_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/andrea_mexico_city_f.wav
+  diego_mexico_city_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/diego_mexico_city_m.wav
+  emiliano_mexico_city_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/emiliano_mexico_city_m.wav
+  nacho_mexico_city_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/nacho_mexico_city_m.wav
+  ximena_mexico_city_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/ximena_mexico_city_f.wav
+  # --- nl-NL platform voices (7) ---
+  guus_amsterdam_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/guus_amsterdam_m.wav
+  levi_amsterdam_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/levi_amsterdam_m.wav
+  mees_amsterdam_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/mees_amsterdam_m.wav
+  noor_amsterdam_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/noor_amsterdam_f.wav
+  sem_amsterdam_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/sem_amsterdam_m.wav
+  sophie_amsterdam_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/sophie_amsterdam_f.wav
+  yara_amsterdam_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/yara_amsterdam_f.wav
+  # --- pt-BR platform voices (6) ---
+  alice_brazil_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/alice_brazil_f.wav
+  helena_brazil_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/helena_brazil_f.wav
+  laura_brazil_f:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/laura_brazil_f.wav
+  mattheus_brazil_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/mattheus_brazil_m.wav
+  nelson_brazil_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/nelson_brazil_m.wav
+  theo_brazil_m:
+    type: fixed_file
+    path: ../gepard-inference/ref_audio/platform_voices/wav/theo_brazil_m.wav
 
 
 # --- preprocessing parity -----------------------------------------------------
@@ -118,14 +234,12 @@ text_normalization:
 # the decoding defaults and which languages each engine covers. Anything set
 # here is a deliberate override of that default, so the two can never drift.
 asr:
-  # Which engine is the headline for each language. The rest are second opinions.
+  # Which engine is the headline for each language. Whisper only this run.
   primary:
     en-US: whisper
-    es-ES: whisper
     es-MX: whisper
     nl-NL: whisper
     pt-BR: whisper
-    ky: gigaam
 
   engines:
     whisper:                        # openai/whisper-large-v3, greedy, 200 tokens
@@ -136,11 +250,11 @@ asr:
       chunk_length_s: null          # short-form path; clips are 2-6 s
 
     mms:                            # CTC, greedy, no LM: emits what it heard
-      enabled: true
+      enabled: false                # whisper-only this run
       batch: 16
 
     gigaam:                         # the only recogniser validated for Kyrgyz here
-      enabled: true
+      enabled: false                # ky not generated this run; whisper-only
       batch: 1                      # transcribes one clip at a time
 
     elevenlabs:                     # Scribe v2 — a second strong-LM read, hosted
@@ -192,6 +306,9 @@ sim:
 # Reported in its own section, never mixed into the WER/SIM tables.
 quality:
   enabled: true
+  limit_per_voice: 10               # naturalness is slow and anchor-free; sample 10
+                                    # clips per voice, not all 1500. The un-measured
+                                    # rows are simply absent from the quality pool.
   dnsmos:                           # same metric as the benchmark's qc_dnsmos_*,
     enabled: true                   # so synthesis is comparable with prompt and GT
     batch_size: 32
@@ -238,7 +355,7 @@ report:
   # self-contained and repeated runs accumulate instead of overwriting.
   push:
     enabled: true
-    repo: nineninesix/gepard-voice-benchmark-generated
+    repo: nineninesix/geparg-1.2-grpo-benchmark-multilang
     private: true
     folder: run_metrics_{date}        # {date} -> the run date, YYYY-MM-DD
     include:

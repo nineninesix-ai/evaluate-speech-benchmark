@@ -141,8 +141,16 @@ class QualityStage:
                     "min_sec": MIN_QUALITY_SEC,
                 },
                 "row_limit": self.row_limit,
+                "limit_per_voice": self.config.quality.limit_per_voice,
             },
         )
+
+    def _row_cap(self) -> Optional[int]:
+        """Effective per-subset cap: the tighter of the config limit and any --limit."""
+        limit = self.config.quality.limit_per_voice
+        if self.row_limit is not None:
+            limit = self.row_limit if limit is None else min(limit, self.row_limit)
+        return limit
 
     # -- execution ----------------------------------------------------------
 
@@ -177,8 +185,9 @@ class QualityStage:
         seen = 0
         n_too_short = 0
 
-        progress = tqdm(total=subset.n_rows, desc=f"{subset.name} · naturalness",
-                        unit="clip", leave=False)
+        row_cap = self._row_cap()
+        progress = tqdm(total=min(subset.n_rows, row_cap) if row_cap else subset.n_rows,
+                        desc=f"{subset.name} · naturalness", unit="clip", leave=False)
 
         def flush():
             if not keys:
@@ -189,7 +198,7 @@ class QualityStage:
             native_buffer.clear()
 
         for row in self.synthesis.iter_rows(subset, columns=[columns.key, columns.audio]):
-            if self.row_limit and seen >= self.row_limit:
+            if row_cap and seen >= row_cap:
                 break
             seen += 1
             progress.update(1)

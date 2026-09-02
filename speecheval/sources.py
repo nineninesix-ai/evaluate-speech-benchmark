@@ -167,8 +167,31 @@ class SynthesisSource:
             files = sorted(directory.glob("*.parquet"))
         return files[0] if files else None
 
+    def _make_subset(self, name: str, language: str, voice_name: str,
+                     parquet: Path) -> SynthesisSubset:
+        return SynthesisSubset(
+            name=name,
+            language=language,
+            voice=self._config.voice(voice_name),
+            path=parquet,
+            n_rows=pq.ParquetFile(parquet).metadata.num_rows,
+        )
+
     def discover(self) -> list[SynthesisSubset]:
-        """Find every `<language>__<voice>` directory the config admits."""
+        """
+        Find every synthesis subset the config admits, in either layout.
+
+        A subset is one language read in one voice, and its name is always
+        `<language>__<voice>`. Two directory shapes produce it:
+
+        * nested (the shape the generator now writes, mirroring a HF dataset):
+          a directory named for a benchmark *language*, holding one
+          `<voice>.parquet` per voice;
+        * flat (the original shape): a `<language>__<voice>` directory holding a
+          single parquet.
+
+        Both are accepted, so a results tree in either shape joins the same way.
+        """
         if not self._root.is_dir():
             raise DataError(f"synthesis.path is not a directory: {self._root}")
 
@@ -179,14 +202,30 @@ class SynthesisSource:
         subsets: list[SynthesisSubset] = []
         skipped: list[str] = []
 
+        def admit(subset_name: str) -> bool:
+            if include is not None and subset_name not in include:
+                return False
+            if subset_name in exclude:
+                skipped.append(f"{subset_name} (excluded)")
+                return False
+            return True
+
         for directory in sorted(p for p in self._root.iterdir() if p.is_dir()):
             name = directory.name
             if name.startswith("."):
                 continue
-            if include is not None and name not in include:
+
+            # Nested layout: a language directory of <voice>.parquet files.
+            if name in languages:
+                for parquet in sorted(directory.glob("*.parquet")):
+                    voice_name = parquet.stem
+                    subset_name = f"{name}__{voice_name}"
+                    if admit(subset_name):
+                        subsets.append(self._make_subset(subset_name, name, voice_name, parquet))
                 continue
-            if name in exclude:
-                skipped.append(f"{name} (excluded)")
+
+            # Flat layout: a <language>__<voice> directory with one parquet.
+            if not admit(name):
                 continue
 
             match = SUBSET_PATTERN.match(name)
@@ -205,16 +244,7 @@ class SynthesisSource:
                 skipped.append(f"{name} (no parquet for split '{self._split}')")
                 continue
 
-            voice = self._config.voice(voice_name)
-            subsets.append(
-                SynthesisSubset(
-                    name=name,
-                    language=language,
-                    voice=voice,
-                    path=parquet,
-                    n_rows=pq.ParquetFile(parquet).metadata.num_rows,
-                )
-            )
+            subsets.append(self._make_subset(name, language, voice_name, parquet))
 
         for message in skipped:
             logger.warning("skipping %s", message)

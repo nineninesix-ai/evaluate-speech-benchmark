@@ -173,7 +173,15 @@ class Publisher:
                 source = self.source / "csv" / f"{name}.csv"
                 if not source.is_file():
                     continue
-                frame = pd.read_csv(source)
+                try:
+                    frame = pd.read_csv(source)
+                except pd.errors.EmptyDataError:
+                    # A table can be legitimately empty — the recogniser
+                    # disagreement table carries no rows when only one recogniser
+                    # ran, and writes a header-less file. Nothing to publish, so
+                    # skip it rather than fail the whole upload.
+                    logger.info("skipping empty summary table %s", name)
+                    continue
                 destination = target / f"{name}.parquet"
                 frame.to_parquet(destination, index=False)
                 record(destination, f"{len(frame)} rows — aggregate table")

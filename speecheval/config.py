@@ -361,6 +361,11 @@ class SimConfig:
 class QualityConfig:
     enabled: bool
     metrics: dict[str, dict]
+    # Cap the naturalness stage at this many clips per voice (subset). None = every
+    # clip. Naturalness is outside the benchmark protocol and has no anchor, so a
+    # small sample per voice is often enough; the un-measured rows are simply
+    # absent from the quality pool (NaN when joined to the full per-utterance set).
+    limit_per_voice: Optional[int] = None
 
     def is_on(self, metric: str) -> bool:
         return self.enabled and bool((self.metrics.get(metric) or {}).get("enabled", False))
@@ -371,7 +376,12 @@ class QualityConfig:
     @classmethod
     def parse(cls, d: dict) -> "QualityConfig":
         metrics = {k: v for k, v in d.items() if k != "enabled" and isinstance(v, dict)}
-        return cls(enabled=bool(d.get("enabled", True)), metrics=metrics)
+        raw_limit = d.get("limit_per_voice")
+        limit = int(raw_limit) if raw_limit is not None else None
+        if limit is not None and limit <= 0:
+            raise ConfigError("quality.limit_per_voice: must be a positive integer or omitted")
+        return cls(enabled=bool(d.get("enabled", True)), metrics=metrics,
+                   limit_per_voice=limit)
 
 
 @dataclass(frozen=True)

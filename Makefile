@@ -65,9 +65,10 @@ setup: ## Create virtual environment and install dependencies
 	fi
 	@echo ""
 	@echo "$(YELLOW)→ Installing torch for this GPU ($(TORCH_INDEX))...$(RESET)"
-	@echo "$(DIM)   torchvision comes from the same index on purpose: timm pulls it in,$(RESET)"
-	@echo "$(DIM)   and the PyPI build can be a release behind this torch.$(RESET)"
-	@uv pip install --python $(PYTHON) torch torchvision torchaudio --index-url $(TORCH_INDEX)
+	@echo "$(DIM)   torchvision/torchcodec come from the same index on purpose: timm pulls$(RESET)"
+	@echo "$(DIM)   torchvision in, and PyPI's torchcodec is a CUDA-13 build that needs$(RESET)"
+	@echo "$(DIM)   libnvrtc.so.13 and won't load against this CUDA-12 (cu128) torch.$(RESET)"
+	@uv pip install --python $(PYTHON) torch torchvision torchaudio torchcodec --index-url $(TORCH_INDEX)
 	@echo "$(GREEN)✓ torch installed$(RESET)"
 	@echo ""
 	@echo "$(YELLOW)→ Installing speecheval and its dependencies...$(RESET)"
